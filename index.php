@@ -395,9 +395,24 @@ admin_externalpage_print_header();
                     <td align="center">
                         <label for="groups"><?php echo get_string('autogroup', $pluginname) ?></label>
                         <br />
-                        <select name="groups[]" id="groups" size="10" multiple="multiple" >
+                        <select name="groups[]" id="groups" size="10" multiple="multiple" 
+                                onchange="
+                                    var groups = document.getElementById('groups');
+                                    var selectedgroups = new Array;
+                                    for (var i=0; i < groups.options.length; i++)
+                                    {
+                                        if (groups.options[i].selected)
+                                            selectedgroups.push('<nobr>' + groups.options[i].value + '</nobr>');
+                                    }
+                                    document.getElementById('selectedgroups').innerHTML = selectedgroups.join(', ');
+                                "                                
+                                >
                             <?php echo $groupnames; ?>
                         </select>
+                    </td>
+                    <td>
+                        <br /><br />
+                        <div id="selectedgroups" style="width:200px"></div>
                     </td>
                 </tr>
                 <tr><td></td><td align="center">
