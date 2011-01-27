@@ -10,4 +10,6 @@
     $string['default'] = 'Course default';
     $string['accept'] = 'Accept';
     $string['autogroup'] = 'Automatically<br />add to groups';
+    $string['loginexists'] = 'Login exists.';
+    $string['erroradd'] = 'Error while adding user to database.';
 ?>
