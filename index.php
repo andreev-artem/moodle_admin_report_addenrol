@@ -59,6 +59,8 @@ if ($listremove && !empty($selcourses)) {
 }
 
 if ($accept) {
+    require_once($CFG->dirroot . '/group/lib.php');
+
     if (empty($SESSION->bulk_courses)) {
         redirect($return);
     }
@@ -80,7 +82,9 @@ if ($accept) {
     $user->country = $CFG->country;
     $user->lang = $CFG->lang;
 
-    $existinguser = get_record('user', 'username', addslashes($user->username), 'mnethostid', $user->mnethostid);
+    global $DB;
+
+    $existinguser = $DB->get_record('user', array('username' => addslashes($user->username), 'mnethostid' => $user->mnethostid));
     if ($existinguser) {
         print_error('loginexists', $pluginname, $return);
     }
@@ -88,7 +92,7 @@ if ($accept) {
     $user->confirmed = 1;
     $user->timemodified = time();
 
-    $user->id = insert_record('user', addslashes_recursive($user));
+    $user->id = $DB->insert_record('user', $user);
     if (!$user->id) {
         print_error('erroradd', $pluginname, $return);
     }
@@ -97,7 +101,7 @@ if ($accept) {
     get_context_instance(CONTEXT_USER, $user->id);
 
     // create helper for logging
-    $courseslist = get_courses(0, 'c.sortorder ASC', 'c.id, c.fullname');
+    $courseslist = get_courses("all", 'c.sortorder ASC', 'c.id, c.fullname');
     $courses = array();
     foreach ($courseslist as $course) {
         $courses[$course->id] = $course->fullname;
@@ -105,52 +109,67 @@ if ($accept) {
 
     // for logging
     $enrolstrings = array();
-    // for each course, get the default role if needed and check the selected group
-    foreach ($SESSION->bulk_courses as $course) {
-        $context = get_context_instance(CONTEXT_COURSE, $course);
-        if ($roleassign == 0) {
-            $defrole = get_default_course_role($context);
-            $roleassign = $defrole->id;
-        }
-
+    $problemcourseids = array();
+    foreach ($SESSION->bulk_courses as $courseid) {
         $groupids = array();
         foreach ($groups as $group) {
-            $groupid = groups_get_group_by_name($course, stripslashes($group));
+            $groupid = groups_get_group_by_name($courseid, stripslashes($group));
             if ($groupid) {
                 $groupids[$groupid] = $group;
             }
         }
-        // for each user, enrol them to the course with the selected role,
-        // and add to the selected group if available
-        role_assign($roleassign, $user->id, 0, $context->id, 0, 0, $hidden);
 
-        $existinggroups = array();
-        foreach ($groupids as $groupid=>$groupname) {
-            if (groups_add_member($groupid, $user->id)) {
-                $existinggroups[] = $groupname;
+        if ($roleassign == 0) {
+            if ($enrol = enrol_get_plugin('manual'))
+                $roleassign = $enrol->get_config('roleid');
+            else {
+                $problemcourseids[] = $courseid;
+                continue;
             }
         }
 
+        $existinggroups = array();
+        if (enrol_try_internal_enrol($courseid, $user->id, $roleassign)) {
+            foreach ($groupids as $groupid => $groupname) {
+                try {
+                    groups_add_member($groupid, $user->id);
+                    $existinggroups[] = $groupname;
+                } catch(Exception $e) {
+
+                }
+            }
+        }
+        else $problemcourseids[] = $courseid;
+
         // for logging
         $groupsstr = join(', ', $existinggroups);
-        $enrolstrings[] = $courses[$course] . ($groupsstr ? ' (' . $groupsstr . ')' : '');
+        $enrolstrings[] = $courses[$courseid] . ($groupsstr ? ' (' . $groupsstr . ')' : '');
     }
     $enrolstr = join('; ', $enrolstrings);
 
     $desctext = get_string('logadding', $pluginname, $user->firstname . ' ' . $user->lastname . ' (' . $user->username .')');
     // get system roles info and add the selected role to the message
     if ($roleassign != 0) {
-        $role = get_record('role', 'id', $roleassign);
+        $role = $DB->get_record('role', array('id' => $roleassign));
         $rolename = $role->name;
     } else {
         $rolename = get_string('default', $pluginname, NULL, $langdir);
     }
     $desctext .= ' ' . get_string('logrole', $pluginname, $rolename);
     $desctext .= ' ' . get_string('logcourses', $pluginname, $enrolstr);
+    if (count($problemcourseids)) $desctext .= ' '.get_string('nointernalenrol', $pluginname, implode(', ', $problemcourseids));
     add_to_log($COURSE->id, 'user', 'add and enrol', 'view.php?id='.$user->id.'&course=1', $desctext, '', $USER->id);
 
-    // we're done, exit now
-    admin_externalpage_print_header();
+    if (count($problemcourseids)) {
+        global $OUTPUT;
+
+        echo $OUTPUT->header();
+        html_writer::tag('p', get_string('nointernalenrol', $pluginname, implode(', ', $problemcourseids)));
+        echo $OUTPUT->continue_button($return);
+        echo $OUTPUT->footer();
+        die;
+    }
+
     redirect($return, get_string('changessaved'));
 }
 
@@ -246,8 +265,9 @@ foreach ($roles as $key => $name) {
     $rolenames .= '>' . $name . '</option> ';
 }
 
-// print the general page
-admin_externalpage_print_header();
+global $OUTPUT;
+
+echo $OUTPUT->header();
 ?>
 <div id="addmembersform">
     <h3 class="main"><?php echo get_string('title', $pluginname) ?></h3>
@@ -321,9 +341,9 @@ admin_externalpage_print_header();
                 </td>
             </tr>
         </table>
-        <table cellpadding="6" class="generaltable generalbox groupmanagementtable boxaligncenter">
+        <table cellpadding="6" class="selectcourses generaltable generalbox boxaligncenter" summary="">
             <tr>
-                <td valign="top">
+              <td id="existingcell">
                     <p>
                         <label for="allcourses"><?php echo get_string('allcourses', $pluginname) ?></label>
                     </p>
@@ -354,22 +374,15 @@ admin_externalpage_print_header();
                         }
                     ?>
                 </td>
-                <td align="center" valign="top">
-                    <?php check_theme_arrows(); ?>
-                    <p class="arrow_button"><br />
-                        <input name="add" id="add" type="submit" disabled value="<?php echo '&nbsp;' . $THEME->rarrow . ' &nbsp; &nbsp; ' . get_string('add'); ?>" title="<?php print_string('add'); ?>" />
-                        <br />
-                        <input name="remove" id="remove" type="submit" disabled value="<?php echo '&nbsp; ' . $THEME->larrow . ' &nbsp; &nbsp; ' . get_string('remove'); ?>" title="<?php print_string('remove'); ?>" />
-                    </p>
-                    <br />
-                    <label for="hidden">
-                    <?php print_string('hiddenassign') ?> <br />
-                        <input type="checkbox" name="hidden" value="1" <?php if ($hidden)
-                            echo 'checked ' ?>/>
-                         <img src="<?php echo $CFG->pixpath; ?>/t/hide.gif" alt="<?php print_string('hiddenassign') ?>" class="hide-show-image" />
-                     </label>
+              <td id="buttonscell">
+                  <div id="addcontrols">
+                        <input name="add" id="add" type="submit" disabled value="<?php echo '&nbsp;' . $OUTPUT->rarrow() . ' &nbsp; &nbsp; ' . get_string('add'); ?>" title="<?php print_string('add'); ?>" />
+                  </div>
+                  <div id="removecontrols">
+                        <input name="remove" id="remove" type="submit" disabled value="<?php echo '&nbsp; ' . $OUTPUT->larrow() . ' &nbsp; &nbsp; ' . get_string('remove'); ?>" title="<?php print_string('remove'); ?>" />
+                  </div>
                  </td>
-                 <td valign="top">
+          <td id="potentialcell">
                      <p>
                          <label for="selcourses"><?php echo get_string('selectedcourses', $pluginname) ?></label>
                      </p>
@@ -395,7 +408,7 @@ admin_externalpage_print_header();
                     <td align="center">
                         <label for="groups"><?php echo get_string('autogroup', $pluginname) ?></label>
                         <br />
-                        <select name="groups[]" id="groups" size="10" multiple="multiple" 
+                        <select name="groups[]" id="groups" size="10" multiple="multiple"
                                 onchange="
                                     var groups = document.getElementById('groups');
                                     var selectedgroups = new Array;
@@ -405,7 +418,7 @@ admin_externalpage_print_header();
                                             selectedgroups.push('<nobr>' + groups.options[i].value + '</nobr>');
                                     }
                                     document.getElementById('selectedgroups').innerHTML = selectedgroups.join(', ');
-                                "                                
+                                "
                                 >
                             <?php echo $groupnames; ?>
                         </select>
@@ -425,5 +438,5 @@ admin_externalpage_print_header();
     </form>
 </div>
 <?php
-    admin_externalpage_print_footer();
+echo $OUTPUT->footer();
 ?>
