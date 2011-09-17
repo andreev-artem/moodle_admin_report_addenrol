@@ -129,7 +129,7 @@ if ($accept) {
         }
 
         $existinggroups = array();
-        if (enrol_try_internal_enrol($courseid, $user->id, $roleassign)) {
+        if (enrol_try_internal_enrol($courseid, $user->id, $roleassign, time())) {
             foreach ($groupids as $groupid => $groupname) {
                 try {
                     groups_add_member($groupid, $user->id);
