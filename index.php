@@ -244,7 +244,10 @@ foreach ($groupnames as $key => $name) {
 $groupnames = implode(' ', $groupnames);
 
 $courseroles = get_roles_for_contextlevels(CONTEXT_COURSE);
-$roles = array_intersect_key(get_all_roles(), array_combine($courseroles, $courseroles));
+$context = get_context_instance(CONTEXT_SYSTEM);
+list($courseviewroles, $ignored) = get_roles_with_cap_in_context($context, 'moodle/course:view');
+$enrolableroles = array_diff_key(array_combine($courseroles, $courseroles), $courseviewroles);
+$roles = array_intersect_key(get_all_roles(), $enrolableroles);
 $roles[0] = (object) array('name' => get_string('default', $pluginname));
 
 $rolenames = '';
